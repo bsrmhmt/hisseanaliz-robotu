@@ -3,23 +3,23 @@ import yfinance as yf
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
-import time # Zamanlayıcı için gerekli
+import time
 from sklearn.ensemble import RandomForestRegressor
 
 # --- Sayfa Ayarları ---
-st.set_page_config(page_title="AI Trader V5.0 (Canlı)", layout="wide")
-st.title("⚡ AI Trader V5.0: Canlı Otomatik Terminal")
+st.set_page_config(page_title="AI Trader V5.1 (Full)", layout="wide")
+st.title("⚡ AI Trader V5.1: Tablolu & Canlı Sürüm")
 
-# --- Kenar Çubuğu ve Ayarlar ---
+# --- Kenar Çubuğu ---
 st.sidebar.header("⚙️ Kontrol Merkezi")
 
-# Canlı Mod Kutusu (En Üstte)
+# Canlı Mod
 st.sidebar.subheader("🔴 Canlı Takip")
 canli_mod = st.sidebar.checkbox("Otomatik Yenile (60sn)", value=False)
 if canli_mod:
-    placeholder = st.sidebar.empty() # Geri sayım sayacı yeri
+    placeholder = st.sidebar.empty()
 
-# Hisseler ve Ayarlar
+# Ayarlar
 default_tickers = "thyao, garan, eregl, astor, sise, kchol"
 user_input = st.sidebar.text_area("Hisse Listesi:", value=default_tickers)
 periyot = st.sidebar.selectbox("Veri Geçmişi:", ["1y", "2y", "5y"], index=0)
@@ -39,7 +39,6 @@ def hisse_kodu_duzelt(text):
 
 def veri_getir(sembol, periyot):
     try:
-        # Periyot düzeltmesi (1y seçilse bile hesaplama için 2y çekiyoruz)
         p = "2y" if periyot == "1y" else periyot
         df = yf.Ticker(sembol).history(period=p)
         if len(df) < 30: return pd.DataFrame()
@@ -56,13 +55,13 @@ def indikatorler(df):
     rs = gain / loss
     df['RSI'] = 100 - (100 / (1 + rs))
     
-    # SMA & Bollinger
+    # Bollinger & SMA
     df['SMA_20'] = df['Close'].rolling(window=20).mean()
     df['Std'] = df['Close'].rolling(window=20).std()
     df['BB_Up'] = df['SMA_20'] + (df['Std']*2)
     df['BB_Low'] = df['SMA_20'] - (df['Std']*2)
     
-    # ATR (Stop Loss için)
+    # ATR
     high_low = df['High'] - df['Low']
     high_close = np.abs(df['High'] - df['Close'].shift())
     low_close = np.abs(df['Low'] - df['Close'].shift())
@@ -77,29 +76,32 @@ def backtest_motoru(df, baslangic_para):
     bakiye = baslangic_para
     lot = 0
     islemler = []
+    alis_fiyati = 0 # İlk değer ataması
     
     for i in range(len(df)-1):
         row = df.iloc[i]
         fiyat = row['Close']
-        tarih = df.index[i]
+        tarih = df.index[i] # Tarihi al
         
-        # Basit Strateji: RSI < 35 AL, RSI > 65 SAT
+        # AL SİNYALİ
         if lot == 0 and row['RSI'] < 35:
             lot = int(bakiye / fiyat)
             bakiye -= lot * fiyat
             alis_fiyati = fiyat
-            islemler.append({'Tarih': tarih, 'Tip': 'AL', 'Fiyat': fiyat})
+            # Tarihi string formatına çevirip ekleyelim ki tabloda düzgün görünsün
+            islemler.append({'Tarih': tarih.strftime('%Y-%m-%d'), 'Tip': 'AL', 'Fiyat': round(fiyat, 2), 'Kar/Zarar': 0})
             
+        # SAT SİNYALİ
         elif lot > 0:
-            # Kar Al veya Stop Loss
-            if row['RSI'] > 65 or fiyat < alis_fiyati * 0.95:
-                bakiye += lot * fiyat
-                kar_zarar = (fiyat - alis_fiyati) * lot
-                tip = 'SAT (Kâr)' if kar_zarar > 0 else 'SAT (Zarar)'
-                islemler.append({'Tarih': tarih, 'Tip': tip, 'Fiyat': fiyat})
+            if row['RSI'] > 65 or (alis_fiyati > 0 and fiyat < alis_fiyati * 0.95):
+                gelir = lot * fiyat
+                bakiye += gelir
+                kar_zarar = gelir - (lot * alis_fiyati)
+                tip = 'SAT (Kâr)' if kar_zarar > 0 else 'SAT (Stop)'
+                islemler.append({'Tarih': tarih.strftime('%Y-%m-%d'), 'Tip': tip, 'Fiyat': round(fiyat, 2), 'Kar/Zarar': round(kar_zarar, 2)})
                 lot = 0
                 
-    if lot > 0: # Son gün elimizde mal varsa satıp nakite dönelim
+    if lot > 0:
         bakiye += lot * df['Close'].iloc[-1]
         
     return bakiye, islemler
@@ -110,7 +112,6 @@ hisseler = hisse_kodu_duzelt(user_input)
 if not hisseler:
     st.warning("Lütfen hisse kodu girin.")
 else:
-    # Sekmeleri Oluştur
     tabs = st.tabs([s.replace(".IS", "") for s in hisseler])
     
     for i, sembol in enumerate(hisseler):
@@ -135,34 +136,40 @@ else:
             son_bakiye, islemler = backtest_motoru(df, bakiye_baslangic)
             getiri_yuzde = ((son_bakiye - bakiye_baslangic) / bakiye_baslangic) * 100
             
-            # --- GÖSTERGELER ---
+            # Göstergeler
             c1, c2, c3, c4 = st.columns(4)
-            c1.metric("Anlık Fiyat", f"{guncel:.2f} TL")
-            c2.metric("AI Hedef", f"{tahmin:.2f} TL", f"%{((tahmin-guncel)/guncel)*100:.2f}")
-            c3.metric("Simülasyon", f"{getiri_yuzde:.1f}% Getiri", f"{son_bakiye:.0f} TL")
+            c1.metric("Fiyat", f"{guncel:.2f} TL")
+            c2.metric("AI Hedef", f"{tahmin:.2f} TL")
+            c3.metric("Simülasyon", f"%{getiri_yuzde:.1f}", f"{son_bakiye:.0f} TL")
             c4.metric("Risk (Stop)", f"{stop_loss:.2f} TL")
             
-            # --- GRAFİK ---
+            # Grafik
             fig = go.Figure()
             fig.add_trace(go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name='Fiyat'))
             
-            # Al-Sat İşaretleri
-            al_tarih = [x['Tarih'] for x in islemler if 'AL' in x['Tip']]
-            al_fiyat = [x['Fiyat'] for x in islemler if 'AL' in x['Tip']]
-            sat_tarih = [x['Tarih'] for x in islemler if 'SAT' in x['Tip']]
-            sat_fiyat = [x['Fiyat'] for x in islemler if 'SAT' in x['Tip']]
+            # İşlem Noktaları
+            al_x = [x['Tarih'] for x in islemler if 'AL' in x['Tip']]
+            al_y = [x['Fiyat'] for x in islemler if 'AL' in x['Tip']]
+            sat_x = [x['Tarih'] for x in islemler if 'SAT' in x['Tip']]
+            sat_y = [x['Fiyat'] for x in islemler if 'SAT' in x['Tip']]
             
-            fig.add_trace(go.Scatter(x=al_tarih, y=al_fiyat, mode='markers', marker=dict(color='green', size=12, symbol='triangle-up'), name='AL Sinyali'))
-            fig.add_trace(go.Scatter(x=sat_tarih, y=sat_fiyat, mode='markers', marker=dict(color='red', size=12, symbol='triangle-down'), name='SAT Sinyali'))
+            fig.add_trace(go.Scatter(x=al_x, y=al_y, mode='markers', marker=dict(color='green', size=10, symbol='triangle-up'), name='AL'))
+            fig.add_trace(go.Scatter(x=sat_x, y=sat_y, mode='markers', marker=dict(color='red', size=10, symbol='triangle-down'), name='SAT'))
             
             fig.update_layout(height=450, xaxis_rangeslider_visible=False)
             st.plotly_chart(fig, use_container_width=True)
+            
+            # --- TABLO BURAYA GELDİ ---
+            st.subheader("📝 İşlem Geçmişi (Simülasyon)")
+            if len(islemler) > 0:
+                df_tablo = pd.DataFrame(islemler)
+                st.dataframe(df_tablo, use_container_width=True)
+            else:
+                st.info("Bu periyotta stratejiye uygun işlem oluşmadı.")
 
-# --- CANLI DÖNGÜ (EN ALTTA OLMALI) ---
+# --- Canlı Döngü ---
 if canli_mod:
-    # Geri sayım
     for s in range(60, 0, -1):
-        placeholder.metric("⏳ Yenilemeye Kalan", f"{s} sn")
+        placeholder.metric("⏳ Yenileme", f"{s} sn")
         time.sleep(1)
-    # Süre dolunca sayfayı yenile
     st.rerun()
