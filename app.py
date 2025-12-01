@@ -10,10 +10,10 @@ from datetime import datetime
 import time
 
 # --- Sayfa Ayarları ---
-st.set_page_config(page_title="AI Finans Pro", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="AI Finans Ultimate", layout="wide", initial_sidebar_state="collapsed")
 
 # --- Session State ---
-if 'basladi' not in st.session_state: st.session_state['basladi'] = False
+if 'page' not in st.session_state: st.session_state['page'] = 'landing'
 if 'favoriler' not in st.session_state: st.session_state['favoriler'] = []
 if 'analiz_gecmisi' not in st.session_state: st.session_state['analiz_gecmisi'] = []
 
@@ -22,81 +22,62 @@ def navigate_to(page):
     st.rerun()
 
 # ==========================================
-# 1. MOTOR BLOĞU (BACKEND)
+# 1. MOTOR BLOĞU (TÜM MOTORLAR BİR ARADA)
 # ==========================================
 
 class AdvancedDataFetcher:
     def get_stock_data(self, sembol):
         try:
             ticker = yf.Ticker(sembol)
-            # Teknik veri (Fiyatlar)
             df = ticker.history(period="2y")
-            # Temel veri (Bilanço)
             info = ticker.info
             if len(df) < 50: return None
-            return {'data': df, 'info': info, 'ticker': ticker}
+            return {'data': df, 'info': info}
         except: return None
 
-# --- YENİ: TEMEL ANALİZ MOTORU (INVESTING PRO TARZI) ---
-class FundamentalEngine:
+class FundamentalEngine: # InvestingPro Tarzı Veri Motoru
     def calculate_fair_value(self, info):
-        """
-        Benjamin Graham Formülü ile Adil Değer Hesaplar.
-        Adil Değer = Karekök(22.5 * EPS * Defter Değeri)
-        """
         try:
             eps = info.get('trailingEps', 0)
             book_value = info.get('bookValue', 0)
             current_price = info.get('currentPrice', 0)
-            
-            if eps is None or book_value is None or eps <= 0 or book_value <= 0:
-                return None, 0 # Hesaplaamzsa
-            
-            # Graham Formülü
+            if eps is None or book_value is None or eps <= 0 or book_value <= 0: return None, 0
             fair_value = np.sqrt(22.5 * eps * book_value)
-            
             upside = ((fair_value - current_price) / current_price) * 100
             return fair_value, upside
-        except:
-            return None, 0
+        except: return None, 0
 
     def calculate_health_score(self, info):
-        """
-        Şirket Sağlık Puanı (0-5 Arası)
-        Büyüme, Kârlılık ve Borç durumuna bakar.
-        """
         score = 0
         try:
-            # 1. Kârlılık (Profitability)
             if info.get('profitMargins', 0) > 0.10: score += 1
             if info.get('returnOnEquity', 0) > 0.15: score += 1
-            
-            # 2. Büyüme (Growth)
             if info.get('revenueGrowth', 0) > 0.10: score += 1
-            
-            # 3. Sağlamlık (Solvency)
-            debt_to_equity = info.get('debtToEquity', 100)
-            if debt_to_equity < 100: score += 1 # Düşük borç
-            
-            # 4. Nakit Durumu
+            if info.get('debtToEquity', 100) < 100: score += 1
             if info.get('quickRatio', 0) > 1: score += 1
-            
             return score
-        except:
-            return 2 # Veri yoksa orta şeker
+        except: return 2
+
+class RiskEngine:
+    def calculate_risk_metrics(self, df):
+        df = df.copy()
+        df['Returns'] = df['Close'].pct_change()
+        volatility = df['Returns'].std() * np.sqrt(252) * 100
+        var_95 = np.percentile(df['Returns'].dropna(), 5) * 100
+        cumulative = (1 + df['Returns']).cumprod()
+        peak = cumulative.expanding(min_periods=1).max()
+        drawdown = (cumulative / peak) - 1
+        max_dd = drawdown.min() * 100
+        return {'volatility': volatility, 'var_95': var_95, 'max_drawdown': max_dd, 'drawdown_series': drawdown}
 
 class AdvancedTechnicalAnalysis:
     def calculate_all_indicators(self, df):
         df = df.copy()
-        delta = df['Close'].diff()
-        gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
-        loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-        rs = gain / loss
-        df['RSI'] = 100 - (100 / (1 + rs))
-        df['SMA_50'] = df['Close'].rolling(window=50).mean()
-        df['SMA_200'] = df['Close'].rolling(window=200).mean()
-        df['BB_Upper'] = df['SMA_50'] + (df['Close'].rolling(window=20).std()*2)
-        df['BB_Lower'] = df['SMA_50'] - (df['Close'].rolling(window=20).std()*2)
+        df['RSI'] = 100 - (100 / (1 + (df['Close'].diff().where(lambda x: x>0,0).rolling(14).mean() / df['Close'].diff().where(lambda x: x<0,0).abs().rolling(14).mean())))
+        df['SMA_50'] = df['Close'].rolling(50).mean()
+        df['SMA_200'] = df['Close'].rolling(200).mean()
+        df['BB_Upper'] = df['Close'].rolling(20).mean() + (df['Close'].rolling(20).std()*2)
+        df['BB_Lower'] = df['Close'].rolling(20).mean() - (df['Close'].rolling(20).std()*2)
         df['Target'] = df['Close'].shift(-5)
         df.dropna(inplace=True)
         return df
@@ -105,8 +86,7 @@ class AdvancedStockPredictor:
     def predict_with_confidence(self, df, horizon=5):
         try:
             features = ['RSI', 'SMA_50', 'SMA_200', 'BB_Upper', 'BB_Lower', 'Volume']
-            X = df[features]
-            y = df['Target']
+            X = df[features]; y = df['Target']
             X_train = X[:-horizon]; y_train = y[:-horizon]; X_today = X.tail(1)
             model = RandomForestRegressor(n_estimators=100, random_state=42)
             model.fit(X_train, y_train)
@@ -118,211 +98,173 @@ class AdvancedStockPredictor:
 
 class AdvancedAIAssistant:
     def generate_analysis(self, df, trend, rsi):
-        analysis_text = f"Trend {trend} yönünde. "
-        if rsi < 30: analysis_text += "Fiyatlar ucuz (Aşırı Satım)."
-        elif rsi > 70: analysis_text += "Fiyatlar pahalı (Aşırı Alım)."
-        return analysis_text
+        text = f"Trend {trend}. "
+        if rsi < 30: text += "Fiyat ucuz."
+        elif rsi > 70: text += "Fiyat pahalı."
+        return {'analysis': text}
 
-class StateManager:
-    def add_to_history(self, sembol, data):
-        if 'analiz_gecmisi' not in st.session_state: st.session_state['analiz_gecmisi'] = []
-        st.session_state['analiz_gecmisi'].insert(0, {'sembol': sembol, **data})
-
-state = StateManager()
+class DashboardComponents:
+    @staticmethod
+    def create_progress_bar(label, value, max_val, color):
+        pct = (value / max_val) * 100
+        return f"""<div style="margin-bottom:5px;"><div style="display:flex;justify-content:space-between;"><span>{label}</span><span>{value}/{max_val}</span></div><div style="width:100%;background:#eee;height:8px;border-radius:5px;"><div style="width:{pct}%;height:100%;background:{color};border-radius:5px;"></div></div></div>"""
 
 # ==========================================
-# 2. ARAYÜZ (FRONTEND)
+# 2. SAYFA TASARIMLARI
 # ==========================================
 
 def show_landing_page():
+    # --- PREMIUM CSS (SENİN SEVDİĞİN TASARIM) ---
     st.markdown("""
         <style>
-        .stApp {background-color: #fff;}
-        .hero {text-align: center; padding: 50px 20px;}
+        .stApp {background-color: #ffffff;}
         .main-title {
-            font-size: 4rem; font-weight: 800;
-            background: linear-gradient(90deg, #00C9FF 0%, #92FE9D 100%);
+            font-size: 5rem; font-weight: 800;
+            background: linear-gradient(120deg, #4facfe 0%, #00f2fe 100%);
             -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+            text-align: center; margin-bottom: 10px; letter-spacing: -2px;
         }
-        .card {
-            padding: 20px; border-radius: 15px; background: white;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.05); text-align: center; border: 1px solid #eee;
+        .sub-title { font-size: 1.4rem; color: #555; text-align: center; font-weight: 300; margin-bottom: 60px; }
+        .feature-card {
+            background: #fff; padding: 30px; border-radius: 20px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.05); text-align: center; border: 1px solid #f0f0f0;
+            height: 280px; transition: all 0.3s ease; display: flex; flex-direction: column; justify-content: space-between;
         }
-        .start-btn button {
-            background: linear-gradient(90deg, #00C9FF 0%, #92FE9D 100%);
-            color: white; padding: 15px 40px; font-size: 1.2rem; border-radius: 30px; border:none; width: 100%;
+        .feature-card:hover { transform: translateY(-10px); box-shadow: 0 20px 50px rgba(0,0,0,0.1); border-color: #4facfe; }
+        .icon { font-size: 3rem; margin-bottom: 10px; }
+        .card-h { font-weight: 700; font-size: 1.2rem; color: #333; margin-bottom: 10px; }
+        .card-p { font-size: 0.9rem; color: #666; margin-bottom: 15px; }
+        .big-btn button {
+            background: linear-gradient(90deg, #4facfe 0%, #00f2fe 100%); color: white;
+            padding: 20px 50px; font-size: 1.3rem !important; box-shadow: 0 10px 30px rgba(79, 172, 254, 0.4);
+            width: 100%; border-radius: 50px; border: none; font-weight: 600;
         }
+        .big-btn button:hover { transform: scale(1.05); box-shadow: 0 15px 40px rgba(79, 172, 254, 0.6); }
+        .risk-btn button { background-color: transparent; color: #4facfe; border: 2px solid #4facfe; border-radius: 50px; }
+        .risk-btn button:hover { background-color: #4facfe; color: white; }
         </style>
     """, unsafe_allow_html=True)
-    
-    st.markdown('<div class="hero"><div class="main-title">AI Finans Pro</div><p>Temel ve Teknik Analiz Bir Arada</p></div>', unsafe_allow_html=True)
-    
+
+    st.markdown('<div class="main-title">AI Finans Ultimate</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sub-title">Yapay Zeka & Temel Analiz Bir Arada</div>', unsafe_allow_html=True)
+
     c1, c2, c3 = st.columns(3)
-    c1.markdown('<div class="card"><h3>📊 Adil Değer</h3><p>Hissenin gerçek ederi nedir?</p></div>', unsafe_allow_html=True)
-    c2.markdown('<div class="card"><h3>🏥 Şirket Sağlığı</h3><p>Bilanço ne kadar sağlam?</p></div>', unsafe_allow_html=True)
-    c3.markdown('<div class="card"><h3>🚀 AI Tahmin</h3><p>Gelecek fiyat hareketleri.</p></div>', unsafe_allow_html=True)
-    
-    st.write("")
-    c1, c2, c3 = st.columns([1,2,1])
+    with c1:
+        st.markdown('<div class="feature-card"><div><div class="icon">🧠</div><div class="card-h">Yapay Zeka</div><div class="card-p">Fiyat hareketlerini tahmin eden akıllı motor.</div></div></div>', unsafe_allow_html=True)
     with c2:
-        st.markdown('<div class="start-btn">', unsafe_allow_html=True)
-        if st.button("TERMİNALİ BAŞLAT"):
-            st.session_state['basladi'] = True
-            st.rerun()
+        st.markdown('<div class="feature-card"><div><div class="icon">🛡️</div><div class="card-h">Risk Merkezi</div><div class="card-p">VaR, Drawdown ve Volatilite analizleri.</div></div></div>', unsafe_allow_html=True)
+        st.markdown('<div class="risk-btn">', unsafe_allow_html=True)
+        if st.button("🛡️ Risk Analizine Git", key="go_risk", use_container_width=True): navigate_to('risk')
+        st.markdown('</div>', unsafe_allow_html=True)
+    with c3:
+        st.markdown('<div class="feature-card"><div><div class="icon">📊</div><div class="card-h">Adil Değer</div><div class="card-p">InvestingPro tarzı temel analiz verileri.</div></div></div>', unsafe_allow_html=True)
+
+    st.write(""); st.write(""); st.write("")
+    
+    col_l, col_m, col_r = st.columns([3, 2, 3])
+    with col_m:
+        st.markdown('<div class="big-btn">', unsafe_allow_html=True)
+        if st.button("🚀 TERMİNALİ BAŞLAT", key="go_main"): navigate_to('main')
         st.markdown('</div>', unsafe_allow_html=True)
 
-def create_gauge_chart(value, title):
-    fig = go.Figure(go.Indicator(
-        mode = "gauge+number",
-        value = value,
-        domain = {'x': [0, 1], 'y': [0, 1]},
-        title = {'text': title},
-        gauge = {
-            'axis': {'range': [0, 100], 'tickwidth': 1, 'tickcolor': "darkblue"},
-            'bar': {'color': "darkblue"},
-            'bgcolor': "white",
-            'borderwidth': 2,
-            'bordercolor': "gray",
-            'steps': [
-                {'range': [0, 30], 'color': 'red'},
-                {'range': [30, 70], 'color': 'yellow'},
-                {'range': [70, 100], 'color': 'green'}],
-            'threshold': {
-                'line': {'color': "black", 'width': 4},
-                'thickness': 0.75,
-                'value': value}
-        }
-    ))
-    fig.update_layout(height=250, margin=dict(l=20, r=20, t=30, b=20))
-    return fig
-
-def analyze_stocks(hisseler):
-    sembol = hisseler[0]
-    fetcher = AdvancedDataFetcher()
-    data = fetcher.get_stock_data(sembol)
+def show_risk_interface():
+    st.markdown("""<style>.stApp{background-color:#f8f9fa;}</style>""", unsafe_allow_html=True)
+    with st.sidebar:
+        st.title("🛡️ Risk Ayarları"); 
+        if st.button("🏠 Ana Ekrana Dön"): navigate_to('landing')
     
-    if not data:
-        st.error("Veri bulunamadı.")
-        return
-    
-    df = data['data']
-    info = data['info']
-    
-    # Motorları Çalıştır
-    ta_engine = AdvancedTechnicalAnalysis()
-    fund_engine = FundamentalEngine()
-    
-    df_tech = ta_engine.calculate_all_indicators(df)
-    fair_value, upside = fund_engine.calculate_fair_value(info)
-    health_score = fund_engine.calculate_health_score(info)
-    
-    current_price = df_tech['Close'].iloc[-1]
-    rsi = df_tech['RSI'].iloc[-1]
-    
-    # --- YENİ: INVESTING PRO TARZI DASHBOARD ---
-    st.markdown(f"## 🏆 {info.get('longName', sembol)} Analizi")
-    
-    # 1. TEMEL ANALİZ KARTLARI (Fair Value & Health)
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        # Adil Değer Kartı
-        st.markdown("### 💰 Adil Değer (Fair Value)")
-        if fair_value:
-            delta_color = "normal" if upside > 0 else "inverse"
-            st.metric("Hesaplanan Gerçek Değer", f"{fair_value:.2f} TL", f"{upside:+.2f}% Potansiyel", delta_color=delta_color)
-            if upside > 20: st.success("✅ HİSSE ÇOK UCUZ (Undervalued)")
-            elif upside < -20: st.error("❌ HİSSE PAHALI (Overvalued)")
-            else: st.warning("⚖️ HİSSE EDERİNDE (Fair)")
-        else:
-            st.info("Bu şirket için Adil Değer hesaplanamıyor (Zarar ediyor olabilir).")
-
-    with col2:
-        # Şirket Sağlığı Kartı
-        st.markdown("### 🏥 Şirket Sağlığı")
-        
-        # Sağlık Progress Bar'ları
-        health_labels = ["Zayıf", "Orta", "İyi", "Çok İyi", "Mükemmel"]
-        health_text = health_labels[min(health_score, 4)]
-        
-        # Renkli Bar
-        bar_color = "red" if health_score < 2 else "orange" if health_score < 4 else "green"
-        st.markdown(f"""
-            <div style="margin-top:10px;">
-                <div style="display:flex; justify-content:space-between;">
-                    <b>Sağlık Puanı: {health_score}/5</b>
-                    <b style="color:{bar_color}">{health_text}</b>
-                </div>
-                <div style="width:100%; background:#eee; height:15px; border-radius:10px;">
-                    <div style="width:{health_score*20}%; background:{bar_color}; height:100%; border-radius:10px;"></div>
-                </div>
-            </div>
-        """, unsafe_allow_html=True)
-        
-        # Detaylar
-        with st.expander("Detaylı Karne"):
-            st.write(f"• Kâr Marjı: %{info.get('profitMargins', 0)*100:.1f}")
-            st.write(f"• Özsermaye Kârlılığı (ROE): %{info.get('returnOnEquity', 0)*100:.1f}")
-            st.write(f"• Borç/Özsermaye: {info.get('debtToEquity', 'N/A')}")
-
-    with col3:
-        # Teknik Gösterge (İbre)
-        st.markdown("### ⚡ Teknik Durum")
-        # Basit teknik skor (RSI ve Ortalamalara göre)
-        tech_score = 50
-        if rsi < 30: tech_score += 20
-        elif rsi > 70: tech_score -= 20
-        if current_price > df_tech['SMA_200'].iloc[-1]: tech_score += 20
-        else: tech_score -= 20
-        
-        fig_gauge = create_gauge_chart(tech_score, "Alım/Satım Gücü")
-        st.plotly_chart(fig_gauge, use_container_width=True)
-        if tech_score > 60: st.success("**GÜÇLÜ AL** Sinyali")
-        elif tech_score < 40: st.error("**GÜÇLÜ SAT** Sinyali")
-        else: st.warning("**NÖTR**")
-
-    st.markdown("---")
-
-    # 2. GRAFİK VE AI
-    st.subheader("📈 Fiyat Grafiği")
-    fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.7, 0.3])
-    fig.add_trace(go.Candlestick(x=df_tech.index, open=df_tech['Open'], high=df_tech['High'], low=df_tech['Low'], close=df_tech['Close'], name='Fiyat'), row=1, col=1)
-    fig.add_trace(go.Scatter(x=df_tech.index, y=df_tech['SMA_50'], name='SMA 50', line=dict(color='orange')), row=1, col=1)
-    fig.add_trace(go.Scatter(x=df_tech.index, y=df_tech['SMA_200'], name='SMA 200', line=dict(color='blue')), row=1, col=1)
-    
-    # Fair Value Çizgisi (Varsa)
-    if fair_value:
-        fig.add_hline(y=fair_value, line_dash="dash", line_color="purple", annotation_text="Adil Değer", row=1, col=1)
-
-    fig.add_trace(go.Bar(x=df_tech.index, y=df_tech['Volume'], name='Hacim'), row=2, col=1)
-    st.plotly_chart(fig, use_container_width=True)
+    st.title("🛡️ Risk Analiz Merkezi"); c1, c2 = st.columns([3, 1])
+    with c1: sembol = st.text_input("Hisse Kodu:", "THYAO")
+    with c2: 
+        st.write(""); st.write("")
+        if st.button("Hesapla", use_container_width=True):
+            fetcher = AdvancedDataFetcher()
+            data = fetcher.get_stock_data(sembol + ".IS")
+            if data:
+                metrics = RiskEngine().calculate_risk_metrics(data['data'])
+                k1, k2, k3 = st.columns(3)
+                k1.metric("Volatilite", f"%{metrics['volatility']:.2f}")
+                k2.metric("VaR (%95)", f"%{metrics['var_95']:.2f}")
+                k3.metric("Max Drawdown", f"%{metrics['max_drawdown']:.2f}")
+                st.line_chart(metrics['drawdown_series'])
+            else: st.error("Veri yok.")
 
 def show_main_interface():
     with st.sidebar:
-        st.title("Ayarlar")
-        if st.button("Çıkış"):
-            st.session_state['basladi'] = False
-            st.rerun()
+        st.title("⚙️ Kontrol"); 
+        if st.button("🏠 Ana Ekrana Dön"): navigate_to('landing')
 
     st.title("📊 Piyasa Analiz Terminali")
     c1, c2 = st.columns([3, 1])
-    with c1:
-        search = st.text_input("Hisse Kodu", value="THYAO")
-    with c2:
-        st.write("")
-        st.write("")
-        btn = st.button("🔍 ANALİZ ET", use_container_width=True)
+    with c1: search = st.text_input("Hisse Kodu", value="THYAO")
+    with c2: 
+        st.write(""); st.write("")
+        btn = st.button("🔍 Analiz", use_container_width=True)
 
     if btn:
         hisseler = [s.strip().upper() + ".IS" if not s.strip().endswith(".IS") else s.strip().upper() for s in search.split(",")]
+        sembol = hisseler[0]
+        
         with st.spinner("AI ve Finans Motorları Çalışıyor..."):
-            analyze_stocks(hisseler)
+            fetcher = AdvancedDataFetcher()
+            data = fetcher.get_stock_data(sembol)
+            
+            if not data:
+                st.error("Veri yok.")
+                return
+            
+            # Tüm Motorları Çalıştır
+            df = data['data']; info = data['info']
+            fund_eng = FundamentalEngine()
+            fair_val, upside = fund_eng.calculate_fair_value(info)
+            health = fund_eng.calculate_health_score(info)
+            
+            tech_eng = AdvancedTechnicalAnalysis()
+            df = tech_eng.calculate_all_indicators(df)
+            
+            pred_eng = AdvancedStockPredictor()
+            pred, conf, _ = pred_eng.predict_with_confidence(df)
+            
+            current = df['Close'].iloc[-1]
+            
+            # --- 1. ADİL DEĞER VE SAĞLIK (INVESTING PRO TARZI) ---
+            st.markdown("### 🏆 Temel Analiz Karnesi")
+            col1, col2, col3 = st.columns(3)
+            
+            with col1: # Adil Değer
+                color = "normal" if upside > 0 else "inverse"
+                st.metric("Adil Değer (Fair Value)", f"{fair_val:.2f} TL" if fair_val else "N/A", f"{upside:+.2f}% Potansiyel", delta_color=color)
+                if upside > 20: st.success("HİSSE ÇOK UCUZ")
+                elif upside < -20: st.error("HİSSE PAHALI")
+                else: st.warning("EDERİNDE")
+                
+            with col2: # Sağlık Skoru
+                st.metric("Şirket Sağlığı", f"{health}/5 Puan")
+                bar_color = "red" if health < 3 else "green"
+                st.markdown(DashboardComponents.create_progress_bar("Finansal Güç", health, 5, bar_color), unsafe_allow_html=True)
+                
+            with col3: # AI Tahmin
+                st.metric("AI Tahmini (T+5)", f"{pred:.2f} TL", f"Güven: ±{conf:.2f}")
+
+            st.divider()
+
+            # --- 2. GRAFİK ---
+            st.subheader("📈 Teknik Grafik")
+            fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.7, 0.3])
+            fig.add_trace(go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name='Fiyat'), row=1, col=1)
+            fig.add_trace(go.Scatter(x=df.index, y=df['SMA_50'], name='SMA 50', line=dict(color='orange')), row=1, col=1)
+            
+            # Fair Value Çizgisi (Varsa)
+            if fair_val:
+                fig.add_hline(y=fair_val, line_dash="dash", line_color="purple", annotation_text="Adil Değer", row=1, col=1)
+
+            fig.add_trace(go.Bar(x=df.index, y=df['Volume'], name='Hacim'), row=2, col=1)
+            st.plotly_chart(fig, use_container_width=True)
 
 def main():
-    if not st.session_state['basladi']:
-        show_landing_page()
-    else:
-        show_main_interface()
+    if st.session_state['page'] == 'landing': show_landing_page()
+    elif st.session_state['page'] == 'main': show_main_interface()
+    elif st.session_state['page'] == 'risk': show_risk_interface()
 
 if __name__ == "__main__":
     main()
