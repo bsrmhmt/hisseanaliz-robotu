@@ -1,3 +1,62 @@
+
+import streamlit as st
+import yfinance as yf
+import pandas as pd
+import numpy as np
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+from sklearn.ensemble import RandomForestRegressor
+from datetime import datetime
+
+# --- 1. SINIFLAR VE MOTORLAR BURAYA ---
+class AdvancedDataFetcher:
+    # ... kodlar ...
+    pass
+
+class AdvancedTechnicalAnalysis:
+    # ... kodlar ...
+    pass
+
+class AdvancedStockPredictor:
+    # ... kodlar ...
+    pass
+
+class AdvancedAIAssistant:
+    # ... kodlar ...
+    pass
+
+class DashboardComponents:
+    # ... kodlar ...
+    pass
+
+# State yönetimi için basit bir sınıf veya sözlük yapısı
+class StateManager:
+    def add_to_history(self, sembol, data):
+        if 'analiz_gecmisi' not in st.session_state:
+            st.session_state['analiz_gecmisi'] = []
+        st.session_state['analiz_gecmisi'].insert(0, {'sembol': sembol, **data})
+
+state = StateManager()
+
+# --- 2. AYARLAR VE SESSION STATE ---
+st.set_page_config(page_title="AI Finans V10", layout="wide")
+
+if 'basladi' not in st.session_state: st.session_state['basladi'] = False
+if 'favoriler' not in st.session_state: st.session_state['favoriler'] = []
+if 'analiz_gecmisi' not in st.session_state: st.session_state['analiz_gecmisi'] = []
+
+# --- 3. SENİN YAZDIĞIN ARAYÜZ KODLARI BURAYA ---
+def main():
+    # ... senin kodların ...
+
+# ... diğer fonksiyonların (show_landing_page vb.) ...
+
+if __name__ == "__main__":
+    main()
+
+
+
+
 # --- Ana Uygulama ---
 def main():
     # İlk başlangıç ekranı
