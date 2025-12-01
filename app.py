@@ -73,8 +73,7 @@ def indikatorler(df):
     true_range = np.max(ranges, axis=1)
     df['ATR'] = true_range.rolling(window=14).mean()
 
-    # YENİ: OBV (On Balance Volume - Hacim Dengesi)
-    # Hacmin fiyatı destekleyip desteklemediğini ölçer
+    # OBV (Hacim Dengesi)
     df['OBV'] = (np.sign(df['Close'].diff()) * df['Volume']).fillna(0).cumsum()
     
     df.dropna(inplace=True)
@@ -90,29 +89,24 @@ def destek_direnc_bul(df):
     destekler.sort()
     return destekler[:2], direncler[:2]
 
-# --- YENİ: AI SKORLAMA MOTORU ---
+# --- AI SKORLAMA MOTORU ---
 def ai_skor_hesapla(row, fk, trend_yonu):
-    puan = 50 # Başlangıç puanı
+    puan = 50 
     
-    # 1. Trend Analizi (+/- 20 Puan)
     if trend_yonu == "YUKARI": puan += 20
     else: puan -= 20
         
-    # 2. RSI Analizi (+/- 15 Puan)
     rsi = row['RSI']
-    if 40 < rsi < 65: puan += 15 # Sağlıklı bölge
-    elif rsi > 75: puan -= 10 # Aşırı şişmiş
-    elif rsi < 30: puan += 10 # Tepki potansiyeli (Ucuz)
+    if 40 < rsi < 65: puan += 15 
+    elif rsi > 75: puan -= 10 
+    elif rsi < 30: puan += 10 
         
-    # 3. Temel Analiz (+/- 15 Puan)
     if 0 < fk < 10: puan += 15
     elif fk > 35: puan -= 10
         
-    # Skor Sınırla (0-100 arası)
     if puan > 100: puan = 100
     if puan < 0: puan = 0
     
-    # Renk ve Mesaj Belirle
     renk = "grey"
     if puan >= 75: renk = "green"
     elif puan <= 40: renk = "red"
@@ -148,7 +142,6 @@ if not st.session_state['basladi']:
 
 # 2. ANALİZ EKRANI
 else:
-    # Üst Bar
     st.markdown("### 🔎 Hisse Analiz Terminali")
     col_s1, col_s2 = st.columns([3, 1])
     with col_s1:
@@ -158,7 +151,6 @@ else:
         st.write("")
         if st.button("Analiz Et", use_container_width=True): st.rerun()
 
-    # Sidebar
     st.sidebar.header("Ayarlar")
     periyot = st.sidebar.selectbox("Geçmiş:", ["1y", "2y", "5y"], index=1)
     canli_mod = st.sidebar.checkbox("Canlı Yenile (60sn)", value=False)
@@ -190,7 +182,6 @@ else:
                     guncel = son_veri['Close']
                     destekler, direncler = destek_direnc_bul(df)
                     
-                    # Trend ve Skor
                     trend = "YUKARI" if guncel > son_veri['SMA_200'] else "AŞAĞI"
                     skor, skor_renk = ai_skor_hesapla(son_veri, fk, trend)
                     karakter = karakter_analizi_yap(son_veri, fk, trend)
@@ -199,7 +190,6 @@ else:
                     c1, c2, c3, c4 = st.columns(4)
                     c1.metric("Fiyat", f"{guncel:.2f} TL", f"%{((guncel-df['Close'].iloc[-2])/df['Close'].iloc[-2])*100:.2f}")
                     
-                    # Skor Göstergesi (Progress Bar gibi)
                     c2.metric("AI Skor (0-100)", f"{skor}/100")
                     if skor_renk == "green": c2.success("GÜÇLÜ GÖRÜNÜM")
                     elif skor_renk == "red": c2.error("ZAYIF GÖRÜNÜM")
@@ -207,6 +197,50 @@ else:
                         
                     c3.metric("Trend (200G)", trend, delta_color="normal" if trend=="YUKARI" else "inverse")
                     
-                    # Hacim Yorumu
+                    # Hacim Yorumu (Hata veren yer burasıydı, düzelttim)
                     hacim_durumu = "Normal"
-                    if son_veri['OBV'] > df['OBV'].mean(): hacim_durumu = "
+                    if son_veri['OBV'] > df['OBV'].mean():
+                        hacim_durumu = "Güçlü (Para Giriyor)"
+                    else:
+                        hacim_durumu = "Zayıf (Para Çıkıyor)"
+                    
+                    c4.metric("Hacim Dengesi", hacim_durumu)
+
+                    # --- GRAFİK ---
+                    fig = go.Figure()
+                    fig.add_trace(go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name='Fiyat'))
+                    fig.add_trace(go.Scatter(x=df.index, y=df['SMA_50'], line=dict(color='orange', width=1), name='50 G.Ort'))
+                    fig.add_trace(go.Scatter(x=df.index, y=df['SMA_200'], line=dict(color='blue', width=2), name='200 G.Ort'))
+                    fig.add_trace(go.Scatter(x=df.index, y=df['BB_Up'], line=dict(color='gray', width=0), showlegend=False))
+                    fig.add_trace(go.Scatter(x=df.index, y=df['BB_Low'], line=dict(color='gray', width=0), fill='tonexty', fillcolor='rgba(128,128,128,0.1)', showlegend=False))
+                    
+                    al_sinyalleri = df[df['RSI'] < 30]
+                    fig.add_trace(go.Scatter(x=al_sinyalleri.index, y=al_sinyalleri['Low']*0.98, mode='markers', marker=dict(color='green', size=8, symbol='triangle-up'), name='Aşırı Satım (Al)'))
+
+                    sat_sinyalleri = df[df['RSI'] > 70]
+                    fig.add_trace(go.Scatter(x=sat_sinyalleri.index, y=sat_sinyalleri['High']*1.02, mode='markers', marker=dict(color='red', size=8, symbol='triangle-down'), name='Aşırı Alım (Sat)'))
+
+                    for d in direncler:
+                        if d > guncel * 0.95: fig.add_hline(y=d, line_dash="dash", line_color="red", annotation_text="Direnç")
+                    for s in destekler:
+                        if s < guncel * 1.05: fig.add_hline(y=s, line_dash="dash", line_color="green", annotation_text="Destek")
+
+                    fig.update_layout(height=550, xaxis_rangeslider_visible=False, title=f"{sembol} Detaylı Teknik Analiz")
+                    st.plotly_chart(fig, use_container_width=True)
+                    
+                    st.write("---")
+                    
+                    col_k1, col_k2, col_k3 = st.columns(3)
+                    with col_k1:
+                        with st.expander("🧘🏻‍♂️ Sabırlı Yatırımcı"):
+                            for y in karakter["sabirli"]: st.write(f"- {y}")
+                    with col_k2:
+                        with st.expander("🎢 Risk Sever Trader"):
+                            for y in karakter["risk_sever"]: st.write(f"- {y}")
+                    with col_k3:
+                        with st.expander("💎 Temel Analizci"):
+                            for y in karakter["temelci"]: st.write(f"- {y}")
+
+    if canli_mod:
+        time.sleep(60)
+        st.rerun()
